@@ -1,7 +1,7 @@
 from tkinter import ttk
 import customtkinter
 from scapy.all import *
-from core import CoreClass
+from Sharkpy.core import CoreClass
 
 customtkinter.set_appearance_mode("System")  # Modes: "System" (standard), "Dark", "Light"
 customtkinter.set_default_color_theme("blue")  # Themes: "blue" (standard), "green", "dark-blue"

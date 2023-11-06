@@ -1,7 +1,8 @@
 from PyQt5 import QtWidgets
 from PyQt5.QtWidgets import QTreeWidgetItem
 
-import qtmodern.styles, qtmodern.windows
+import qtmodern.windows
+import qtmodern.styles
 from gui import qt_ui
 import netifaces
 from protocol_parser import *
@@ -122,7 +123,10 @@ class SniffTool(QtWidgets.QMainWindow, qt_ui.Ui_MainWindow):
         self.filter_table.clearContents()
         self.filter_table.setRowCount(0)
         self.detail_tree_widget.clear()
-        self.hexdump_list.clear()
+        self.hexdump_hex1.clear()
+        self.hexdump_ascii.clear()
+        self.hexdump_row.clear()
+
         self.packet_list = []
         self.c.packet_counter = 0
         self.c.myturn = 0
@@ -193,12 +197,12 @@ class SniffTool(QtWidgets.QMainWindow, qt_ui.Ui_MainWindow):
                     var += "   "
                     var2 += "   "
 
-            s += " %s\n" % sane_color(x[i:i + 16])
-            self.hexdump_ascii.addItem(" %s" % sane_color(x[i:i + 16]))
+            s += " %s\n" % x[i:i + 16]
+            self.hexdump_ascii.addItem(" %s" % x[i:i + 16])
 
             i += 16
 
-            # self.hexdump_hex1.addItem(var1)
+            # self.hexdump_hex1.addItem(var1
             # self.hexdump_hex1.setStyleSheet("QListWidget::item { text-align: justify; }")
             # self.hexdump_hex2.addItem(var2)
             self.hexdump_hex1.setStyleSheet("QListWidget::item { text-align: justify; }")
@@ -255,6 +259,7 @@ if __name__ == '__main__':
     tool = SniffTool()
     # qtmodern.styles.light(app)
     qtmodern.styles.dark(app)
+    # qtmodern.styles.dark(app)
 
     moderntool = qtmodern.windows.ModernWindow(tool)
 
