@@ -1,5 +1,6 @@
 from binascii import hexlify, unhexlify
-
+import socket
+import netifaces
 from netfilterqueue import NetfilterQueue
 from scapy.all import *
 from p_firewall import *
@@ -26,6 +27,7 @@ class CoreClass():
             # Parser el paquete con Scapy
             ether_packet = Ether(pkt.get_payload())
             del ether_packet[Raw]
+
             ip_packet = IP(pkt.get_payload())
             spacket = ip_packet
 
@@ -44,9 +46,20 @@ class CoreClass():
                 self.myturn += 1
 
             if self.automod:
-                ip_packet = self.automod_packets(spacket, self.parent.textEdit.toPlainText(),
-                                             self.parent.textEdit_2.toPlainText())
-                self.parent.push_packets(ip_packet)
+                if self.parent.outputCheckBox_2.isChecked():
+                    for ip in self.get_source_ip():
+                        if spacket[IP].src == ip:
+                            ip_packet = self.automod_packets(spacket, self.parent.textEdit.toPlainText(),
+                                                             self.parent.textEdit_2.toPlainText())
+                            self.parent.push_packets(ip_packet, self.packet_counter - 1)
+
+                if self.parent.InputCheckBox.isChecked():
+                    for ip in self.get_source_ip():
+                        if spacket[IP].dst == ip:
+                            ip_packet = self.automod_packets(spacket, self.parent.textEdit.toPlainText(),
+                                                             self.parent.textEdit_2.toPlainText())
+                            self.parent.push_packets(ip_packet, self.packet_counter - 1)
+
 
             pkt.set_payload(bytes(ip_packet))
             pkt.accept()
@@ -55,7 +68,6 @@ class CoreClass():
             raise KeyboardInterrupt
 
     def automod_packets(self, spacket, search, replace):
-        # Modificar el paquete
         pktHex = hexlify(bytes(spacket))
         if search in str(pktHex):
             pktHex = pktHex.replace(search.encode(), replace.encode())
@@ -89,10 +101,27 @@ class CoreClass():
             # hilo se mate. Stop modifica el valor is_started para que sea el mismo hilo el que lance la excecpion.
             # Sino no puedo lanzar la excepcion a otro hilo. Tiene que ser el.
 
+    def get_source_ip(self):
+        direcciones_ip = []
+        try:
+            # Obtén la información de todas las interfaces de red
+            interfaces = netifaces.interfaces()
 
+            for interface in interfaces:
+                # Obtén la información de la interfaz
+                interfaz_info = netifaces.ifaddresses(interface)
 
+                # Busca la dirección IPv4 (AF_INET) en la interfaz
+                if netifaces.AF_INET in interfaz_info:
+                    direcciones_ip.extend(info['addr'] for info in interfaz_info[netifaces.AF_INET])
+
+        except (socket.error, netifaces.error) as e:
+            print(f"Error al obtener las direcciones IP: {e}")
+
+        return direcciones_ip
 
     def stop(self):
         print("Deteniendo el procesamiento de paquetes...")
+        flush()
         self.is_started = False
 

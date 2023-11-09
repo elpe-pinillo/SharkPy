@@ -3,3 +3,4 @@ netifaces
 scapy
 qtmodern
 netfilterqueue
+apt-get install build-essential python3-dev libnetfilter-queue-dev

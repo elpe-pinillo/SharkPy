@@ -40,9 +40,6 @@ class SniffTool(QtWidgets.QMainWindow, qt_ui.Ui_MainWindow):
         self.deb_breakButton.clicked.connect(self.deb_break_button_event)
         self.deb_continueButton.clicked.connect(self.deb_continue_button_event)
         self.deb_nextButton.clicked.connect(self.deb_next_button_event)
-        self.InputCheckBox.clicked.connect(self.updateInputFilter)
-        self.outputCheckBox_2.clicked.connect(self.updateOutputFilter)
-        self.forwardCheckBox_3.clicked.connect(self.updateForwardFilter)
 
         self.filter_table.itemChanged.connect(self.updateObject)
         # self.filter_table.itemChanged.connect(self.show_packet)
@@ -50,7 +47,7 @@ class SniffTool(QtWidgets.QMainWindow, qt_ui.Ui_MainWindow):
         self.detail_tree_widget.itemChanged.connect(self.updateFilterTable)
 
     def updateObject(self, item):
-        # To review, this is very inneficient because every single time a new packet arrives this function is called.
+        # To review, this is very inefficient because every single time a new packet arrives this function is called.
         # We only want this when someone make a change in on the items of the table
         if(item.column() == 1):
             packet = self.packet_list[item.row()]
@@ -94,6 +91,7 @@ class SniffTool(QtWidgets.QMainWindow, qt_ui.Ui_MainWindow):
     def stop_corrupt_button_event(self):
         self.sCorruptButton.setEnabled(False)
         self.corruptButton.setEnabled(True)
+        print("stop corrupt button")
         self.c.automod = False
 
     def deb_break_button_event(self):
@@ -104,14 +102,6 @@ class SniffTool(QtWidgets.QMainWindow, qt_ui.Ui_MainWindow):
 
     def deb_next_button_event(self):
         self.c.myturn += 1
-
-
-    def updateInputFilter(self):
-        self.c.filter_input = self.InputCheckBox.isChecked()
-    def updateOutputFilter(self):
-        self.c.filter_output = self.outputCheckBox_2.isChecked()
-    def updateForwardFilter(self):
-        self.c.filter_forward = self.forwardCheckBox_3.isChecked()
 
     def deb_continue_button_event(self):
         self.deb_breakButton.setEnabled(True)
@@ -169,9 +159,6 @@ class SniffTool(QtWidgets.QMainWindow, qt_ui.Ui_MainWindow):
 
         hexdump_str = hexdump(selected_packet[IP], dump=True)
         s = ""
-        var1 = ""
-        var2 = ""
-        counter = 0
         x = bytes_encode(selected_packet[IP])
         x_len = len(x)
         i = 0
@@ -202,30 +189,19 @@ class SniffTool(QtWidgets.QMainWindow, qt_ui.Ui_MainWindow):
 
             i += 16
 
-            # self.hexdump_hex1.addItem(var1
-            # self.hexdump_hex1.setStyleSheet("QListWidget::item { text-align: justify; }")
-            # self.hexdump_hex2.addItem(var2)
             self.hexdump_hex1.setStyleSheet("QListWidget::item { text-align: justify; }")
             self.hexdump_hex1.addItem(var)
 
-        # hexdump_lines = hexdump_str.split("\n")
-        # for line in hexdump_lines:
-            # Si la línea no está vacía
-            # if line.strip():
-            #     # Agrega la línea al list widget
-            #     split_values = line.split(" ")
-            #
-            #
-            #     # self.hexdump_row.addItem(split_values[0])
-            #     # self.hexdump_ascii.addItem(split_values[-1])
-            #     # self.hexdump_hex1.addItem(hex1)
-            #     # self.hexdump_hex2.addItem(hex2)
-            #     print(line)
 
-    def push_packets(self, spacket):
-        row = self.filter_table.rowCount()
-        self.packet_list.append(spacket)
-        self.filter_table.insertRow(row)
+
+    def push_packets(self, spacket, row="null"):
+        if row == "null":
+            row = self.filter_table.rowCount()
+            self.packet_list.append(spacket)
+            self.filter_table.insertRow(row)
+        else:
+            self.packet_list[row] = spacket
+
 
         if self.event_time == 0.0:
             self.initial_time = time.time()
@@ -235,16 +211,12 @@ class SniffTool(QtWidgets.QMainWindow, qt_ui.Ui_MainWindow):
 
         self.filter_table.setItem(row, 1, QtWidgets.QTableWidgetItem(spacket[IP].src))
         self.filter_table.setItem(row, 2, QtWidgets.QTableWidgetItem(spacket[IP].dst))
-        # self.filter_table.setItem(row, 3, QtWidgets.QTableWidgetItem(str(list(self.expand(spacket)))))
         self.filter_table.setItem(row, 3, QtWidgets.QTableWidgetItem(get_protocol(spacket)))
-
-        # self.filter_table.setItem(row, 3, QtWidgets.QTableWidgetItem(
-        #     str(spacket[IP].guess_payload_class(spacket.payload).__name__) + " port " + spacket[TCP].dport))
         self.filter_table.setItem(row, 4, QtWidgets.QTableWidgetItem(str(spacket[IP].len)))
         self.filter_table.setItem(row, 5, QtWidgets.QTableWidgetItem(spacket[IP].summary()))
+
         if self.auto_down_scroll:
             self.filter_table.scrollToBottom()
-
     def expand(self, x):
         yield x.name
         while x.payload:
