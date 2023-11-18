@@ -4,7 +4,6 @@ import netifaces
 from netfilterqueue import NetfilterQueue
 from scapy.all import *
 from p_firewall import *
-import ctypes
 
 
 class CoreClass():
@@ -40,7 +39,7 @@ class CoreClass():
                     raise KeyboardInterrupt
                 pass
 
-            ip_packet = self.parent.packet_list[self.packet_counter - 1]    # This is just to synchronize gui with core
+            ip_packet = self.parent.packet_list[self.packet_counter - 1]  # This is just to synchronize gui with core
 
             if (self.myturn != self.packet_counter):
                 self.myturn += 1
@@ -60,6 +59,10 @@ class CoreClass():
                                                              self.parent.textEdit_2.toPlainText())
                             self.parent.push_packets(ip_packet, self.packet_counter - 1)
 
+                if self.parent.forwardCheckBox_3.isChecked():
+                    ip_packet = self.automod_packets(spacket, self.parent.textEdit.toPlainText(),
+                                                     self.parent.textEdit_2.toPlainText())
+                    self.parent.push_packets(ip_packet, self.packet_counter - 1)
 
             pkt.set_payload(bytes(ip_packet))
             pkt.accept()
@@ -88,7 +91,7 @@ class CoreClass():
         return spacket
 
     def run(self, iface):
-        filter(mitm="false", i=iface)
+        filter(mitm=True, i=iface)
         self.is_started = True
         nfqueue = NetfilterQueue()
         nfqueue.bind(0, self.procesar_paquete)
@@ -124,4 +127,3 @@ class CoreClass():
         print("Deteniendo el procesamiento de paquetes...")
         flush()
         self.is_started = False
-

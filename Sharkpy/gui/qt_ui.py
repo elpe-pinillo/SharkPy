@@ -333,7 +333,7 @@ class Ui_MainWindow(object):
 
     def retranslateUi(self, MainWindow):
         _translate = QtCore.QCoreApplication.translate
-        MainWindow.setWindowTitle(_translate("MainWindow", "PROSHARK"))
+        MainWindow.setWindowTitle(_translate("MainWindow", "SharkPy"))
         self.TITLE.setText(_translate("MainWindow", "SharkPy"))
         self.sniffButton.setText(_translate("MainWindow", "Sniff"))
         self.haltButton.setText(_translate("MainWindow", "Stop"))

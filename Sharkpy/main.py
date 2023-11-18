@@ -40,7 +40,6 @@ class SniffTool(QtWidgets.QMainWindow, qt_ui.Ui_MainWindow):
         self.deb_breakButton.clicked.connect(self.deb_break_button_event)
         self.deb_continueButton.clicked.connect(self.deb_continue_button_event)
         self.deb_nextButton.clicked.connect(self.deb_next_button_event)
-
         self.filter_table.itemChanged.connect(self.updateObject)
         # self.filter_table.itemChanged.connect(self.show_packet)
         # self.detail_tree_widget.itemChanged.connect(self.updateObject)
@@ -61,9 +60,11 @@ class SniffTool(QtWidgets.QMainWindow, qt_ui.Ui_MainWindow):
         self.updateFilterTable(item)
 
     def updateTreeView(self, item):
+
         pass
 
     def updateFilterTable(self, item):
+
         pass
 
     def sniff_button_event(self):
@@ -128,7 +129,7 @@ class SniffTool(QtWidgets.QMainWindow, qt_ui.Ui_MainWindow):
         for protocol in list(self.expand(selected_packet)):
             if protocol == "Raw":
                 raw_layer_gui = QTreeWidgetItem(self.detail_tree_widget, ["Data"])
-                QTreeWidgetItem(raw_layer_gui, ["Data: " + str(selected_packet[Raw])])
+                QTreeWidgetItem(raw_layer_gui, ["Data: " + str(selected_packet[Raw].load)])
             elif protocol == "Ethernet":
                 ether_layer = QTreeWidgetItem(self.detail_tree_widget, ["Ethernet"])
                 for field in selected_packet[protocol].fields:
