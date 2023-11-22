@@ -1,5 +1,6 @@
 from PyQt5 import QtWidgets
-from PyQt5.QtWidgets import QTreeWidgetItem
+from PyQt5.QtWidgets import QTreeWidgetItem, QMenu, QAction
+from PyQt5.QtCore import QEvent
 
 import qtmodern.windows
 import qtmodern.styles
@@ -8,6 +9,7 @@ import netifaces
 from protocol_parser import *
 from scapy.all import *
 from core import CoreClass
+from p_firewall import *
 
 
 class SniffTool(QtWidgets.QMainWindow, qt_ui.Ui_MainWindow):
@@ -35,12 +37,20 @@ class SniffTool(QtWidgets.QMainWindow, qt_ui.Ui_MainWindow):
         self.clearButton.clicked.connect(self.clear_view)
         self.filter_table.cellClicked.connect(self.show_packet)
         self.filter_table.cellClicked.connect(self.show_hex_packet)
+
+
+
         self.corruptButton.clicked.connect(self.corrupt_button_event)
         self.sCorruptButton.clicked.connect(self.stop_corrupt_button_event)
         self.deb_breakButton.clicked.connect(self.deb_break_button_event)
         self.deb_continueButton.clicked.connect(self.deb_continue_button_event)
         self.deb_nextButton.clicked.connect(self.deb_next_button_event)
         self.filter_table.itemChanged.connect(self.updateObject)
+        self.filter_table.installEventFilter(self)
+
+
+
+
         # self.filter_table.itemChanged.connect(self.show_packet)
         # self.detail_tree_widget.itemChanged.connect(self.updateObject)
         self.detail_tree_widget.itemChanged.connect(self.updateFilterTable)
@@ -67,6 +77,31 @@ class SniffTool(QtWidgets.QMainWindow, qt_ui.Ui_MainWindow):
 
         pass
 
+    def eventFilter(self, source, event):
+        if event.type() == QEvent.ContextMenu and source is self.filter_table:
+            menu = QMenu()
+            option1_action = QAction("Resend", self)
+            option1_action.triggered.connect(self.onResendMenuClicked)
+            menu.addAction(option1_action)
+            menu.exec_(event.globalPos())
+            return True
+        return super().eventFilter(source, event)
+
+    def onResendMenuClicked(self):
+        selected_rows = set()
+        for item in self.filter_table.selectedItems():
+            if item.row() not in selected_rows:
+                selected_rows.add(item.row())
+
+        for row in selected_rows:
+            #self.push_packets(self.packet_list[row])
+            send(self.packet_list[row])
+
+            # self.c.procesar_paquete(bytes(self.packet_list[item.row()]))
+
+
+
+        print("resend started")
     def sniff_button_event(self):
         self.sniffButton.setEnabled(False)
         self.haltButton.setEnabled(True)

@@ -5,7 +5,6 @@ from netfilterqueue import NetfilterQueue
 from scapy.all import *
 from p_firewall import *
 
-
 class CoreClass():
     def __init__(self, parent):
         self.parent = parent
@@ -71,9 +70,13 @@ class CoreClass():
             raise KeyboardInterrupt
 
     def automod_packets(self, spacket, search, replace):
+
         pktHex = hexlify(bytes(spacket))
-        if search in str(pktHex):
-            pktHex = pktHex.replace(search.encode(), replace.encode())
+
+        if search.lower() in str(pktHex).lower():
+
+            pktHex = pktHex.replace(search.lower().encode(), replace.lower().encode())
+
         spacketbytes = unhexlify(pktHex)
         spacket = IP(spacketbytes)
 
