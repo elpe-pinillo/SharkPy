@@ -18,10 +18,13 @@ Sharkpy is a powerful network tool that allows you to explore, analyze, and take
 
 
 ## REQUIRENMENTS
-
-- 
--
--
+- Linux
+- pyqt
+- netifaces
+- scapy
+- qtmodern
+- netfilterqueue
+- apt-get install build-essential python3-dev libnetfilter-queue-dev
 
 ## Who Is This For?
 
@@ -30,9 +33,5 @@ Sharkpy is a powerful network tool that allows you to explore, analyze, and take
 - **For Network Professionals:** Network administrators and security professionals will find Sharkpy an essential tool for diagnosing issues, maintaining network security, and testing for vulnerabilities.
 
 
-## POC
---------------------
-- VIDEO 
-- VIDEO
--------------------
+
 So go ahead, download Sharkpy, and start exploring the world of networks in an exciting and controlled way!
