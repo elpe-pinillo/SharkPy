@@ -72,6 +72,16 @@ def get_original_dst(sock):
         return None, None
 
 
+def _drain_http_headers(sock):
+    """Read and discard HTTP headers until the blank line (\\r\\n\\r\\n)."""
+    buf = b''
+    while b'\r\n\r\n' not in buf:
+        chunk = sock.recv(4096)
+        if not chunk:
+            break
+        buf += chunk
+
+
 # ── proxy ─────────────────────────────────────────────────────────────────────
 
 class TLSProxy(QObject):
@@ -87,7 +97,8 @@ class TLSProxy(QObject):
         PyQt5 automatically queues cross-thread signal delivery.
     """
 
-    data_intercepted = pyqtSignal(str, str, bytes)
+    # hostname, conn_id, port, direction ('→'/'←'), raw_bytes
+    data_intercepted = pyqtSignal(str, int, int, str, bytes)
 
     def __init__(self, ca_manager, listen_port: int = 8443, parent=None):
         super().__init__(parent)
@@ -96,6 +107,8 @@ class TLSProxy(QObject):
         self.running     = False
         self._sock       = None
         self._thread     = None
+        self._conn_counter = 0
+        self._conn_lock    = threading.Lock()
 
     # ── lifecycle ─────────────────────────────────────────────────────────────
 
@@ -132,6 +145,8 @@ class TLSProxy(QObject):
                     client_sock, addr = self._sock.accept()
                 except socket.timeout:
                     continue
+                except OSError:
+                    break
                 threading.Thread(
                     target=self._handle,
                     args=(client_sock,),
@@ -147,25 +162,39 @@ class TLSProxy(QObject):
                 except Exception:
                     pass
 
+    def _next_conn_id(self) -> int:
+        with self._conn_lock:
+            self._conn_counter += 1
+            return self._conn_counter
+
     # ── per-connection handler ────────────────────────────────────────────────
 
     def _handle(self, raw_sock: socket.socket):
         client_ssl = None
         real_ssl   = None
+        conn_id    = self._next_conn_id()
         try:
             raw_sock.settimeout(10)
 
-            # Where was this packet originally headed?
-            dst_ip, dst_port = get_original_dst(raw_sock)
-            dst_port = dst_port or 443
-
-            # Peek at ClientHello to get SNI without consuming bytes
-            try:
-                peek = raw_sock.recv(4096, socket.MSG_PEEK)
-                hostname = extract_sni(peek)
-            except Exception:
-                hostname = None
-            hostname = hostname or dst_ip or 'unknown'
+            # ── Detect HTTP CONNECT (explicit proxy) vs direct TLS (transparent) ──
+            peek = raw_sock.recv(8, socket.MSG_PEEK)
+            if peek.upper().startswith(b'CONNECT '):
+                hostname, dst_port = self._read_connect(raw_sock)
+                if hostname is None:
+                    return
+                # Consume the rest of the CONNECT headers
+                _drain_http_headers(raw_sock)
+                raw_sock.sendall(b'HTTP/1.1 200 Connection established\r\n\r\n')
+            else:
+                # Transparent mode: iptables redirected the connection here
+                dst_ip, dst_port = get_original_dst(raw_sock)
+                dst_port = dst_port or 443
+                try:
+                    peek2 = raw_sock.recv(4096, socket.MSG_PEEK)
+                    hostname = extract_sni(peek2)
+                except Exception:
+                    hostname = None
+                hostname = hostname or dst_ip or 'unknown'
 
             # Build (or reuse) a per-host SSL context with a forged cert
             try:
@@ -185,9 +214,7 @@ class TLSProxy(QObject):
             # Real TLS connection to the destination server
             try:
                 cli_ctx  = ssl.create_default_context()
-                real_raw = socket.create_connection(
-                    (dst_ip or hostname, dst_port), timeout=10
-                )
+                real_raw = socket.create_connection((hostname, dst_port), timeout=10)
                 real_ssl = cli_ctx.wrap_socket(real_raw, server_hostname=hostname)
                 real_ssl.settimeout(30)
             except Exception as exc:
@@ -198,12 +225,12 @@ class TLSProxy(QObject):
             done = threading.Event()
             t1 = threading.Thread(
                 target=self._relay,
-                args=(client_ssl, real_ssl, hostname, '→', done),
+                args=(client_ssl, real_ssl, hostname, dst_port, conn_id, '→', done),
                 daemon=True,
             )
             t2 = threading.Thread(
                 target=self._relay,
-                args=(real_ssl, client_ssl, hostname, '←', done),
+                args=(real_ssl, client_ssl, hostname, dst_port, conn_id, '←', done),
                 daemon=True,
             )
             t1.start()
@@ -220,7 +247,25 @@ class TLSProxy(QObject):
                 except Exception:
                     pass
 
-    def _relay(self, src, dst, hostname: str, direction: str, done: threading.Event):
+    @staticmethod
+    def _read_connect(sock) -> tuple:
+        """Read the CONNECT request line; return (hostname, port) or (None, None)."""
+        buf = b''
+        while b'\r\n' not in buf:
+            chunk = sock.recv(256)
+            if not chunk:
+                return None, None
+            buf += chunk
+        first_line = buf.split(b'\r\n')[0].decode(errors='replace')
+        try:
+            _, target, _ = first_line.split(' ', 2)
+            host, _, port_str = target.rpartition(':')
+            return host, int(port_str) if port_str else 443
+        except Exception:
+            return None, None
+
+    def _relay(self, src, dst, hostname: str, port: int, conn_id: int,
+               direction: str, done: threading.Event):
         try:
             while not done.is_set():
                 try:
@@ -230,8 +275,7 @@ class TLSProxy(QObject):
                 if not chunk:
                     break
                 dst.sendall(chunk)
-                # Emit to Qt main thread (cross-thread signal delivery is automatic)
-                self.data_intercepted.emit(hostname, direction, bytes(chunk))
+                self.data_intercepted.emit(hostname, conn_id, port, direction, bytes(chunk))
         except (OSError, ssl.SSLError):
             pass
         finally:

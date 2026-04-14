@@ -6,6 +6,7 @@ common = [
     "scapy",
     "qtmodern",
     "cryptography",
+    "psutil",
 ]
 
 if sys.platform == "win32":

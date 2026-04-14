@@ -32,76 +32,113 @@ class CoreClass():
         self.filter_output = True
         self.filter_forward = False
         self._debug_event = threading.Event()
+        self._port_filter = None
+        self._edited_bytes = None
+
+    def _port_matches(self, ip_pkt):
+        """Return True if packet matches active port filter (or no filter set)."""
+        pf = getattr(self, '_port_filter', None)
+        if not pf:
+            return True
+        pkt_ports = set()
+        if ip_pkt.haslayer(TCP):
+            pkt_ports |= {ip_pkt[TCP].sport, ip_pkt[TCP].dport}
+        if ip_pkt.haslayer(UDP):
+            pkt_ports |= {ip_pkt[UDP].sport, ip_pkt[UDP].dport}
+        return bool(pkt_ports & pf)
 
     def procesar_paquete(self, pkt):
         """
         This function is executed whenever a packet is sniffed
         """
-        if self.is_started:
-            ip_packet = IP(pkt.get_payload())
-            spacket = ip_packet
+        if not self.is_started:
+            raise KeyboardInterrupt
 
-            self.packet_counter += 1
+        raw = pkt.get_payload()
+        ip_version = (raw[0] >> 4) if raw else 4
+        ip_packet = IPv6(raw) if ip_version == 6 else IP(raw)
+        spacket = ip_packet
 
-            # Push packet to GUI from the capture thread via invokeMethod
+        # Port filter: silently forward non-matching packets
+        if not self._port_matches(ip_packet):
+            pkt.accept()
+            return
+
+        self.packet_counter += 1
+
+        if self.parent.debugmode:
+            # ── Intercept/debug mode: hold packet until user steps forward ──
+            # Block until GUI appends to packet_list so user can edit it.
+            QMetaObject.invokeMethod(
+                self.parent, "push_packets",
+                Qt.BlockingQueuedConnection,
+                Q_ARG("PyQt_PyObject", ip_packet),
+                Q_ARG("PyQt_PyObject", "null"),
+            )
+            self._debug_event.clear()
+            self._debug_event.wait()
+            if not self.is_started:
+                raise KeyboardInterrupt
+
+            # Use edited bytes if the user modified the packet in the GUI
+            if self._edited_bytes is not None:
+                try:
+                    eb = self._edited_bytes
+                    ip_packet = IPv6(eb) if (eb and eb[0] >> 4 == 6) else IP(eb)
+                except Exception:
+                    ip_packet = self.parent.packet_list[self.packet_counter - 1]
+                self._edited_bytes = None
+            else:
+                ip_packet = self.parent.packet_list[self.packet_counter - 1]
+        else:
+            # ── Normal mode: forward immediately, update GUI asynchronously ──
+            # Apply automod before forwarding (does not require GUI round-trip).
+            if self.automod:
+                _pkt_src = (spacket[IP].src if spacket.haslayer(IP) else
+                            spacket[IPv6].src if spacket.haslayer(IPv6) else None)
+                _pkt_dst = (spacket[IP].dst if spacket.haslayer(IP) else
+                            spacket[IPv6].dst if spacket.haslayer(IPv6) else None)
+                if self.parent.outputCheckBox_2.isChecked():
+                    for lip in self.get_source_ip():
+                        if _pkt_src == lip:
+                            ip_packet = self.automod_packets(
+                                spacket,
+                                self.parent.textEdit.toPlainText(),
+                                self.parent.textEdit_2.toPlainText(),
+                            )
+                if self.parent.InputCheckBox.isChecked():
+                    for lip in self.get_source_ip():
+                        if _pkt_dst == lip:
+                            ip_packet = self.automod_packets(
+                                spacket,
+                                self.parent.textEdit.toPlainText(),
+                                self.parent.textEdit_2.toPlainText(),
+                            )
+                if self.parent.forwardCheckBox_3.isChecked():
+                    ip_packet = self.automod_packets(
+                        spacket,
+                        self.parent.textEdit.toPlainText(),
+                        self.parent.textEdit_2.toPlainText(),
+                    )
+
+            # Forward packet immediately — no waiting for GUI.
+            pkt.set_payload(bytes(ip_packet))
+            pkt.accept()
+
+            # Push display update to GUI asynchronously (does not block forwarding).
             QMetaObject.invokeMethod(
                 self.parent, "push_packets",
                 Qt.QueuedConnection,
                 Q_ARG("PyQt_PyObject", ip_packet),
+                Q_ARG("PyQt_PyObject", "null"),
             )
+            return
 
-            # Block until the user steps forward in debug mode
-            if self.parent.debugmode:
-                self._debug_event.clear()
-                self._debug_event.wait()
-                if not self.is_started:
-                    raise KeyboardInterrupt
+        if self.myturn != self.packet_counter:
+            self.myturn += 1
 
-            ip_packet = self.parent.packet_list[self.packet_counter - 1]
-
-            if self.myturn != self.packet_counter:
-                self.myturn += 1
-
-            if self.automod:
-                if self.parent.outputCheckBox_2.isChecked():
-                    for ip in self.get_source_ip():
-                        if spacket[IP].src == ip:
-                            ip_packet = self.automod_packets(spacket, self.parent.textEdit.toPlainText(),
-                                                             self.parent.textEdit_2.toPlainText())
-                            QMetaObject.invokeMethod(
-                                self.parent, "push_packets",
-                                Qt.QueuedConnection,
-                                Q_ARG("PyQt_PyObject", ip_packet),
-                                Q_ARG("PyQt_PyObject", self.packet_counter - 1),
-                            )
-
-                if self.parent.InputCheckBox.isChecked():
-                    for ip in self.get_source_ip():
-                        if spacket[IP].dst == ip:
-                            ip_packet = self.automod_packets(spacket, self.parent.textEdit.toPlainText(),
-                                                             self.parent.textEdit_2.toPlainText())
-                            QMetaObject.invokeMethod(
-                                self.parent, "push_packets",
-                                Qt.QueuedConnection,
-                                Q_ARG("PyQt_PyObject", ip_packet),
-                                Q_ARG("PyQt_PyObject", self.packet_counter - 1),
-                            )
-
-                if self.parent.forwardCheckBox_3.isChecked():
-                    ip_packet = self.automod_packets(spacket, self.parent.textEdit.toPlainText(),
-                                                     self.parent.textEdit_2.toPlainText())
-                    QMetaObject.invokeMethod(
-                        self.parent, "push_packets",
-                        Qt.QueuedConnection,
-                        Q_ARG("PyQt_PyObject", ip_packet),
-                        Q_ARG("PyQt_PyObject", self.packet_counter - 1),
-                    )
-
-            pkt.set_payload(bytes(ip_packet))
-            pkt.accept()
-
-        else:
-            raise KeyboardInterrupt
+        pkt.set_payload(bytes(ip_packet))
+        pkt.accept()
 
     def debug_step(self):
         """Signal the capture thread to release the next packet."""
@@ -116,7 +153,7 @@ class CoreClass():
             pktHex = pktHex.replace(search.lower().encode(), replace.lower().encode())
 
         spacketbytes = unhexlify(pktHex)
-        spacket = IP(spacketbytes)
+        spacket = IPv6(spacketbytes) if (spacketbytes and spacketbytes[0] >> 4 == 6) else IP(spacketbytes)
 
         if spacket.haslayer(IP):
             spacket[IP].len = None
@@ -131,8 +168,9 @@ class CoreClass():
             spacket[ICMP].chksum = None
         return spacket
 
-    def run(self, iface):
+    def run(self, iface, port_filter=None):
         """Intercept mode: route traffic through NFQUEUE for modify/drop/forward."""
+        self._port_filter = port_filter
         filter(mitm=True, i=iface)
         self.is_started = True
         nfqueue = NetfilterQueue()
@@ -143,22 +181,31 @@ class CoreClass():
             nfqueue.unbind()
             flush()
 
-    def run_windivert(self, iface):
+    def run_windivert(self, iface, port_filter=None):
         """Windows intercept mode: hold every IP packet via WinDivert, allow
         modify/drop, then reinject.  Requires the WinDivert driver and pydivert.
 
         Per-interface filtering uses the Windows adapter index.  Falls back to
         capturing all traffic when the index cannot be determined.
         """
+        self._port_filter = port_filter
+
         # Build WinDivert filter string.
-        # Attempt per-interface filtering via ifIdx; fall back to "true" (all traffic).
-        wd_filter = "true"
+        parts = []
         if iface != "Any...":
             try:
                 idx = socket.if_nametoindex(iface)
-                wd_filter = f"ifIdx == {idx}"
+                parts.append(f"ifIdx == {idx}")
             except (AttributeError, OSError):
-                pass   # socket.if_nametoindex not available on older Windows
+                pass
+        if port_filter:
+            port_clauses = " or ".join(
+                f"tcp.DstPort == {p} or tcp.SrcPort == {p} or "
+                f"udp.DstPort == {p} or udp.SrcPort == {p}"
+                for p in port_filter
+            )
+            parts.append(f"({port_clauses})")
+        wd_filter = " and ".join(parts) if parts else "true"
 
         self.is_started = True
         try:
@@ -178,7 +225,9 @@ class CoreClass():
                         break
 
                     try:
-                        ip_pkt = IP(packet.raw)
+                        _raw = packet.raw
+                        _ver = (_raw[0] >> 4) if _raw else 4
+                        ip_pkt = IPv6(_raw) if _ver == 6 else IP(_raw)
                     except Exception:
                         try:
                             w.send(packet)
@@ -190,8 +239,9 @@ class CoreClass():
 
                     QMetaObject.invokeMethod(
                         self.parent, "push_packets",
-                        Qt.QueuedConnection,
+                        Qt.BlockingQueuedConnection,
                         Q_ARG("PyQt_PyObject", ip_pkt),
+                        Q_ARG("PyQt_PyObject", "null"),
                     )
 
                     # Debug / intercept stepping
@@ -262,15 +312,15 @@ class CoreClass():
         except Exception as exc:
             logger.error("WinDivert error: %s", exc)
 
-    def run_sniff(self, iface):
+    def run_sniff(self, iface, bpf_filter=None):
         """Passive sniff mode: capture full L2 frames via raw socket (read-only)."""
+        self._port_filter = None  # not needed; BPF handles it at capture level
         self.is_started = True
         iface_arg = None if iface == "Any..." else iface
-        self._sniffer = AsyncSniffer(
-            iface=iface_arg,
-            prn=self._handle_sniffed_packet,
-            store=False,
-        )
+        kwargs = dict(iface=iface_arg, prn=self._handle_sniffed_packet, store=False)
+        if bpf_filter:
+            kwargs['filter'] = bpf_filter
+        self._sniffer = AsyncSniffer(**kwargs)
         self._sniffer.start()
         while self.is_started:
             time.sleep(0.1)
@@ -285,6 +335,7 @@ class CoreClass():
             self.parent, "push_packets",
             Qt.QueuedConnection,
             Q_ARG("PyQt_PyObject", pkt),
+            Q_ARG("PyQt_PyObject", "null"),
         )
         if self.parent.debugmode:
             self._debug_event.clear()
