@@ -1,73 +1,66 @@
-from scapy.all import *
+from scapy.all import IP, IPv6, TCP, UDP, ICMP, ARP, Ether
+
+_TCP_PORTS = {
+    21: "FTP", 22: "SSH", 23: "Telnet", 25: "SMTP", 53: "DNS",
+    67: "DHCP", 69: "TFTP", 80: "HTTP", 110: "POP3", 137: "NetBIOS",
+    139: "NetBIOS", 143: "IMAP", 161: "SNMP", 389: "LDAP", 443: "HTTPS",
+    445: "SMB", 514: "Syslog", 1194: "OpenVPN", 1433: "MSSQL",
+    1521: "OracleDB", 2049: "NFS", 3306: "MySQL", 3389: "RDP",
+    5060: "SIP", 5432: "PostgreSQL",
+}
+
+_UDP_PORTS = {
+    53: "DNS", 67: "DHCP", 68: "DHCP", 123: "NTP",
+    161: "SNMP", 500: "IKE", 1194: "OpenVPN",
+}
+
 
 def get_protocol(packet):
-        if packet.haslayer(IP):
-            ip_packet = packet[IP]
-            if ip_packet.haslayer(TCP):
-                tcp_packet = ip_packet[TCP]
-                if tcp_packet.dport == 80 or tcp_packet.sport == 80:
-                    return "HTTP"
-                elif tcp_packet.dport == 443 or tcp_packet.sport == 443:
-                    return "HTTPS"
-                elif tcp_packet.dport == 22 or tcp_packet.sport == 22:
-                    return "SSH"
-                elif tcp_packet.dport == 23 or tcp_packet.sport == 23:
-                    return "Telnet"
-                elif tcp_packet.dport == 21 or tcp_packet.sport == 21:
-                    return "FTP"
-                elif tcp_packet.dport == 25 or tcp_packet.sport == 25:
-                    return "SMTP"
-                elif tcp_packet.dport == 53 or tcp_packet.sport == 53:
-                    return "DNS"
-                elif tcp_packet.dport == 110 or tcp_packet.sport == 110:
-                    return "POP3"
-                elif tcp_packet.dport == 143 or tcp_packet.sport == 143:
-                    return "IMAP"
-                elif tcp_packet.dport == 3306 or tcp_packet.sport == 3306:
-                    return "MySQL"
-                elif tcp_packet.dport == 5432 or tcp_packet.sport == 5432:
-                    return "PostgreSQL"
-                elif tcp_packet.dport == 3389 or tcp_packet.sport == 3389:
-                    return "RDP"
-                elif tcp_packet.dport == 1194 or tcp_packet.sport == 1194:
-                    return "OpenVPN"
-                elif tcp_packet.dport == 5060 or tcp_packet.sport == 5060:
-                    return "SIP"
-                elif tcp_packet.dport == 67 or tcp_packet.sport == 67:
-                    return "DHCP"
-                elif tcp_packet.dport == 161 or tcp_packet.sport == 161:
-                    return "SNMP"
-                elif tcp_packet.dport == 69 or tcp_packet.sport == 69:
-                    return "TFTP"
-                elif tcp_packet.dport == 161 or tcp_packet.sport == 161:
-                    return "SNMP"
-                elif tcp_packet.dport == 137 or tcp_packet.sport == 137:
-                    return "NetBIOS"
-                elif tcp_packet.dport == 139 or tcp_packet.sport == 139:
-                    return "NetBIOS"
-                elif tcp_packet.dport == 389 or tcp_packet.sport == 389:
-                    return "LDAP"
-                elif tcp_packet.dport == 1433 or tcp_packet.sport == 1433:
-                    return "MSSQL"
-                elif tcp_packet.dport == 1521 or tcp_packet.sport == 1521:
-                    return "OracleDB"
-                elif tcp_packet.dport == 514 or tcp_packet.sport == 514:
-                    return "Syslog"
-                elif tcp_packet.dport == 445 or tcp_packet.sport == 445:
-                    return "SMB"
-                elif tcp_packet.dport == 2049 or tcp_packet.sport == 2049:
-                    return "NFS"
-                # Agrega más protocolos y puertos TCP según tus necesidades aquí
-            elif ip_packet.haslayer(UDP):
-                udp_packet = ip_packet[UDP]
-                if udp_packet.dport == 53 or udp_packet.sport == 53:
-                    return "DNS (UDP)"
-                elif udp_packet.dport == 67 or udp_packet.sport == 67:
-                    return "DHCP (UDP)"
-                # Agrega más protocolos y puertos UDP según tus necesidades aquí
-            elif packet.haslayer(ICMP):
-                return "ICMP"
-        # Agrega más protocolos en capa 2 según tus necesidades aqu
-        return "Desconocido"
+    if packet.haslayer(IP) or packet.haslayer(IPv6):
+        ip = packet.getlayer(IP) or packet.getlayer(IPv6)
+        if packet.haslayer(TCP):
+            tcp = packet[TCP]
+            return (_TCP_PORTS.get(tcp.dport) or _TCP_PORTS.get(tcp.sport) or "TCP")
+        if packet.haslayer(UDP):
+            udp = packet[UDP]
+            return (_UDP_PORTS.get(udp.dport) or _UDP_PORTS.get(udp.sport) or "UDP")
+        if packet.haslayer(ICMP):
+            return "ICMP"
+        return "IPv6" if packet.haslayer(IPv6) else "IP"
+    if packet.haslayer(ARP):
+        return "ARP"
+    if packet.haslayer(Ether):
+        return "Ethernet"
+    return "Unknown"
 
 
+def packet_src(pkt):
+    if pkt.haslayer(IP):
+        return pkt[IP].src
+    if pkt.haslayer(IPv6):
+        return pkt[IPv6].src
+    if pkt.haslayer(ARP):
+        return pkt[ARP].psrc
+    if pkt.haslayer(Ether):
+        return pkt[Ether].src
+    return "N/A"
+
+
+def packet_dst(pkt):
+    if pkt.haslayer(IP):
+        return pkt[IP].dst
+    if pkt.haslayer(IPv6):
+        return pkt[IPv6].dst
+    if pkt.haslayer(ARP):
+        return pkt[ARP].pdst
+    if pkt.haslayer(Ether):
+        return pkt[Ether].dst
+    return "N/A"
+
+
+def packet_len(pkt):
+    if pkt.haslayer(IP):
+        return pkt[IP].len
+    if pkt.haslayer(IPv6):
+        return pkt[IPv6].plen
+    return len(pkt)

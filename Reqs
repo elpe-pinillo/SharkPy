@@ -1,6 +1,18 @@
-pyqt
+# Python packages (all platforms)
+pyqt5
 netifaces
 scapy
 qtmodern
+
+# Linux only (intercept mode via NFQUEUE)
 netfilterqueue
-apt-get install build-essential python3-dev libnetfilter-queue-dev
+# also requires: apt-get install build-essential python3-dev libnetfilter-queue-dev
+
+# Windows only (intercept mode via WinDivert)
+pydivert
+# also requires: WinDivert driver — https://reqrypt.org/windivert.html
+#   install with: pip install pydivert
+#   run as Administrator for intercept mode
+
+# Windows passive sniff
+# also requires: Npcap — https://npcap.com  (install with "WinPcap API-compatible mode")

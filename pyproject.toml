@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "sharkpy"
+version = "1.0.0"
+description = "Network packet interceptor — Wireshark UI, Burp Suite workflow, any protocol"
+readme = "README.md"
+license = {text = "GPL-3.0-or-later"}
+requires-python = ">=3.8"
+keywords = ["network", "packet", "capture", "tls", "mitm", "wireshark", "security"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: X11 Applications :: Qt",
+    "Intended Audience :: Information Technology",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: System :: Networking",
+    "Topic :: Security",
+]
+
+[project.urls]
+Homepage = "https://github.com/your-username/SharkPy"
+Issues = "https://github.com/your-username/SharkPy/issues"
+Documentation = "https://github.com/your-username/SharkPy/tree/main/docs"
+Changelog = "https://github.com/your-username/SharkPy/blob/main/CHANGELOG.md"
+
+[tool.flake8]
+max-line-length = 120
+extend-ignore = ["E501", "W503"]
+exclude = [
+    "Sharkpy/gui/qt_ui.py",
+    "Sharkpy/auxiliar.py",
+    "venv",
+    ".venv",
+    "build",
+    "dist",
+    "*.egg-info",
+]
