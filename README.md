@@ -87,7 +87,7 @@ The installer detects your package manager (apt / dnf / pacman), installs system
 3. Open **PowerShell as Administrator** and run:
 
 ```powershell
-git clone https://github.com/YourUser/SharkPy.git
+git clone https://github.com/elpe-pinillo/SharkPy.git
 cd SharkPy
 .\install.ps1
 ```
