@@ -225,7 +225,7 @@ class CoreClass():
                         break
 
                     try:
-                        _raw = packet.raw
+                        _raw = bytes(packet.raw)
                         _ver = (_raw[0] >> 4) if _raw else 4
                         ip_pkt = IPv6(_raw) if _ver == 6 else IP(_raw)
                     except Exception:
@@ -303,7 +303,7 @@ class CoreClass():
                                 Q_ARG("PyQt_PyObject", self.packet_counter - 1),
                             )
 
-                    packet.raw = bytes(ip_pkt)
+                    packet.raw = memoryview(bytearray(bytes(ip_pkt))) 
                     try:
                         w.send(packet)
                     except Exception as exc:
