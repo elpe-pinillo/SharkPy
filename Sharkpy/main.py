@@ -38,7 +38,9 @@ from ca_manager import CAManager
 from tls_proxy import TLSProxy
 from tcp_proxy import TCPProxy
 
-if sys.platform != "win32":
+if sys.platform == "win32":
+    from p_firewall_win import flush, tls_intercept, tls_flush, tcp_intercept, tcp_flush, quic_block, quic_unblock
+else:
     from p_firewall import flush, tls_intercept, tls_flush, tcp_intercept, tcp_flush, quic_block, quic_unblock
 
 
@@ -234,6 +236,7 @@ class SniffTool(QtWidgets.QMainWindow, qt_ui.Ui_MainWindow):
         self._creds_entries      = []   # captured credentials
         self._smb_entries        = []   # SMB operations
         self._sql_entries        = []   # SQL queries (MySQL / PostgreSQL)
+        self._mssql_stream_bufs  = {}   # stream_key -> bytearray for TCP reassembly
         self.insp_tabs.currentChanged.connect(self._insp_tab_changed)
         self.proxy_clear_btn.clicked.connect(self._proxy_clear)
         self.proxy_clear_filter_btn.clicked.connect(lambda: self.proxy_filter_edit.clear())
@@ -2020,23 +2023,24 @@ class SniffTool(QtWidgets.QMainWindow, qt_ui.Ui_MainWindow):
         self._tls_proxy.listen_port = proxy_port
         self._tls_proxy.start()
 
-        if sys.platform != "win32":
+        try:
+            tls_intercept(intercept_ports, proxy_port)
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(
+                self, "Intercept rule failed",
+                f"{exc}\n\nProxy is running but traffic is not being redirected.\n"
+                + ("Make sure you are running as Administrator and WinDivert is installed."
+                   if sys.platform == "win32" else
+                   "Make sure you are root and iptables is available."),
+            )
+        if self.tls_block_quic_cb.isChecked():
             try:
-                tls_intercept(intercept_ports, proxy_port)
-            except Exception as exc:
-                QtWidgets.QMessageBox.warning(
-                    self, "iptables failed",
-                    f"{exc}\n\nProxy is running but traffic is not being redirected.\n"
-                    "Make sure you are root and iptables is available.",
-                )
-            if self.tls_block_quic_cb.isChecked():
-                try:
-                    quic_block(intercept_ports)
-                except Exception:
-                    pass
+                quic_block(intercept_ports)
+            except Exception:
+                pass
 
         ports_str = ', '.join(str(p) for p in intercept_ports)
-        quic_note = "  +QUIC blocked" if (sys.platform != "win32" and self.tls_block_quic_cb.isChecked()) else ""
+        quic_note = "  +QUIC blocked" if self.tls_block_quic_cb.isChecked() else ""
         self.tls_proxy_status.setText(f"Active  [{ports_str} → {proxy_port}]{quic_note}")
         self.tls_proxy_status.setStyleSheet("color: #40c060; font-weight: bold;")
         self.tls_start_btn.setEnabled(False)
@@ -2051,15 +2055,14 @@ class SniffTool(QtWidgets.QMainWindow, qt_ui.Ui_MainWindow):
 
         self._tls_proxy.stop()
 
-        if sys.platform != "win32":
-            try:
-                tls_flush(intercept_ports, proxy_port)
-            except Exception:
-                pass
-            try:
-                quic_unblock(intercept_ports)
-            except Exception:
-                pass
+        try:
+            tls_flush(intercept_ports, proxy_port)
+        except Exception:
+            pass
+        try:
+            quic_unblock(intercept_ports)
+        except Exception:
+            pass
 
         self.tls_proxy_status.setText("Stopped")
         self.tls_proxy_status.setStyleSheet("")
@@ -2077,15 +2080,16 @@ class SniffTool(QtWidgets.QMainWindow, qt_ui.Ui_MainWindow):
         self._tcp_proxy.listen_port = proxy_port
         self._tcp_proxy.start()
 
-        if sys.platform != "win32":
-            try:
-                tcp_intercept(intercept_ports, proxy_port)
-            except Exception as exc:
-                QtWidgets.QMessageBox.warning(
-                    self, "iptables failed",
-                    f"{exc}\n\nTCP proxy is running but traffic is not being redirected.\n"
-                    "Make sure you are root and iptables is available.",
-                )
+        try:
+            tcp_intercept(intercept_ports, proxy_port)
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(
+                self, "Intercept rule failed",
+                f"{exc}\n\nTCP proxy is running but traffic is not being redirected.\n"
+                + ("Make sure you are running as Administrator and WinDivert is installed."
+                   if sys.platform == "win32" else
+                   "Make sure you are root and iptables is available."),
+            )
 
         ports_str = ', '.join(str(p) for p in intercept_ports)
         self.tcp_proxy_status.setText(f"Active  [{ports_str} → {proxy_port}]")
@@ -2102,11 +2106,10 @@ class SniffTool(QtWidgets.QMainWindow, qt_ui.Ui_MainWindow):
 
         self._tcp_proxy.stop()
 
-        if sys.platform != "win32":
-            try:
-                tcp_flush(intercept_ports, proxy_port)
-            except Exception:
-                pass
+        try:
+            tcp_flush(intercept_ports, proxy_port)
+        except Exception:
+            pass
 
         self.tcp_proxy_status.setText("Stopped")
         self.tcp_proxy_status.setStyleSheet("")
@@ -5276,6 +5279,7 @@ class SniffTool(QtWidgets.QMainWindow, qt_ui.Ui_MainWindow):
         self._creds_entries.clear()
         self._smb_entries.clear()
         self._sql_entries.clear()
+        self._mssql_stream_bufs.clear()
         self.http_table.setRowCount(0)
         self.dns_table.setRowCount(0)
         self.conv_table.setRowCount(0)
@@ -5900,15 +5904,31 @@ class SniffTool(QtWidgets.QMainWindow, qt_ui.Ui_MainWindow):
         """Parse MSSQL TDS wire protocol. Handles SQL Batch and TDS7 Login."""
         if dport != 1433:
             return
-        if len(raw) < 8:
+        if not raw:
             return
 
-        pkt_type = raw[0]
-        pkt_len = int.from_bytes(raw[2:4], 'big')
-        if pkt_len < 8 or len(raw) < pkt_len:
-            return
+        stream_key = (src, sport, dst, dport)
+        buf = self._mssql_stream_bufs.get(stream_key, bytearray())
+        buf += raw
+        self._mssql_stream_bufs[stream_key] = buf
 
-        data = raw[8:pkt_len]
+        while len(buf) >= 8:
+            pkt_type = buf[0]
+            pkt_len = int.from_bytes(buf[2:4], 'big')
+            if pkt_len < 8:
+                # corrupt header — discard stream
+                self._mssql_stream_bufs.pop(stream_key, None)
+                return
+            if len(buf) < pkt_len:
+                # incomplete packet — wait for more data
+                return
+            data = bytes(buf[8:pkt_len])
+            buf = buf[pkt_len:]
+            self._mssql_stream_bufs[stream_key] = buf
+            self._insp_parse_mssql_packet(pkt_type, t, data, src, dst, sport, dport)
+
+    def _insp_parse_mssql_packet(self, pkt_type, t, data, src, dst, sport, dport):
+        """Process one fully-reassembled TDS packet."""
         type_name = self._TDS_TYPES.get(pkt_type, f"0x{pkt_type:02x}")
 
         if pkt_type == 0x01:  # SQL Batch — UTF-16LE query

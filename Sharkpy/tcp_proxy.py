@@ -24,14 +24,18 @@ _SO_ORIGINAL_DST = 80   # Linux SOL_IP
 
 
 def get_original_dst(sock):
-    """Return (ip_str, port) of the pre-REDIRECT destination, or (None, None).
+    """Return (ip_str, port) of the pre-redirect destination, or (None, None).
 
-    Tries SO_ORIGINAL_DST first (works for both PREROUTING and OUTPUT on
-    modern kernels).  Falls back to IP6T_SO_ORIGINAL_DST for IPv6.
-    Returns (None, None) on Windows or if the socket option is unavailable.
+    On Linux reads SO_ORIGINAL_DST (iptables REDIRECT).
+    On Windows queries the WinDivert connection table.
     """
     if sys.platform == 'win32':
-        return None, None
+        try:
+            from p_firewall_win import get_original_dst_win
+            client_src_port = sock.getpeername()[1]
+            return get_original_dst_win(client_src_port)
+        except Exception:
+            return None, None
     # IPv4
     try:
         raw  = sock.getsockopt(socket.SOL_IP, _SO_ORIGINAL_DST, 16)
