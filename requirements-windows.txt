@@ -1,0 +1,7 @@
+scapy
+PyQt5>=5.15
+qtmodern
+cryptography
+psutil
+netifaces2
+pydivert

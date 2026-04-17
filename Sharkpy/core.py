@@ -303,7 +303,7 @@ class CoreClass():
                                 Q_ARG("PyQt_PyObject", self.packet_counter - 1),
                             )
 
-                    packet.raw = memoryview(bytearray(bytes(ip_pkt))) 
+                    packet.raw = memoryview(bytearray(bytes(ip_pkt)))
                     try:
                         w.send(packet)
                     except Exception as exc:

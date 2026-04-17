@@ -233,6 +233,7 @@ class SniffTool(QtWidgets.QMainWindow, qt_ui.Ui_MainWindow):
         self._tls_hs_entries     = []   # TLS handshake records
         self._creds_entries      = []   # captured credentials
         self._smb_entries        = []   # SMB operations
+        self._sql_entries        = []   # SQL queries (MySQL / PostgreSQL)
         self.insp_tabs.currentChanged.connect(self._insp_tab_changed)
         self.proxy_clear_btn.clicked.connect(self._proxy_clear)
         self.proxy_clear_filter_btn.clicked.connect(lambda: self.proxy_filter_edit.clear())
@@ -245,6 +246,8 @@ class SniffTool(QtWidgets.QMainWindow, qt_ui.Ui_MainWindow):
         self.creds_table.currentCellChanged.connect(lambda r, c, pr, pc: self._insp_creds_row_selected(r))
         self.creds_copy_btn.clicked.connect(self._insp_creds_copy)
         self.smb_table.currentCellChanged.connect(lambda r, c, pr, pc: self._insp_smb_row_selected(r))
+        self.sql_table.currentCellChanged.connect(lambda r, c, pr, pc: self._insp_sql_row_selected(r))
+        self.sql_copy_btn.clicked.connect(self._insp_sql_copy)
 
         # Telnet session state
         self._telnet_sessions = []   # list of session dicts
@@ -2269,6 +2272,24 @@ class SniffTool(QtWidgets.QMainWindow, qt_ui.Ui_MainWindow):
                 buf['resp'] = buf['resp'][len(msg):]
                 self._proxy_parse_tls_http(msg, hostname, port, t, is_request=False,
                                            conn_id=conn_id)
+
+        # ── SQL protocols over TLS (client→server queries only) ───────
+        if direction == '→' and port in (3306, 5432, 1433):
+            self._insp_parse_sql_from_tls(data, hostname, port, conn_id, t)
+
+    def _insp_parse_sql_from_tls(self, data: bytes, hostname: str, port: int,
+                                  conn_id: int, t: float):
+        """Parse decrypted SQL bytes coming out of the TLS proxy."""
+        src = f"client:{conn_id}"
+        dst = hostname
+        sport = conn_id   # use conn_id as a stable fake sport so stream keys stay unique
+        dport = port
+        if port == 3306:
+            self._insp_parse_mysql(None, t, data, src, dst, sport, dport)
+        elif port == 5432:
+            self._insp_parse_pgsql(None, t, data, src, dst, sport, dport)
+        elif port == 1433:
+            self._insp_parse_mssql(None, t, data, src, dst, sport, dport)
 
     def _proxy_parse_tls_http(self, raw: bytes, hostname: str, port: int,
                                t: float, is_request: bool, conn_id: int):
@@ -4422,6 +4443,14 @@ class SniffTool(QtWidgets.QMainWindow, qt_ui.Ui_MainWindow):
                 self._proxy_parse_telnet(pkt, t)
                 return
 
+        # ── MySQL (3306) / PostgreSQL (5432) / MSSQL (1433) ─────────
+        if pkt.haslayer(TCP) and pkt.haslayer(Raw):
+            tcp_p = pkt[TCP]
+            if tcp_p.dport in (3306, 5432, 1433) or tcp_p.sport in (3306, 5432, 1433):
+                self._insp_parse_sql(pkt, t)
+                self._proxy_parse_conv(pkt, t)
+                return
+
         # ── Conversations (TCP + UDP with payload) ────────────────────
         if (pkt.haslayer(TCP) or pkt.haslayer(UDP)) and pkt.haslayer(Raw):
             self._proxy_parse_conv(pkt, t)
@@ -5242,6 +5271,7 @@ class SniffTool(QtWidgets.QMainWindow, qt_ui.Ui_MainWindow):
         self._tls_hs_entries.clear()
         self._creds_entries.clear()
         self._smb_entries.clear()
+        self._sql_entries.clear()
         self.http_table.setRowCount(0)
         self.dns_table.setRowCount(0)
         self.conv_table.setRowCount(0)
@@ -5249,6 +5279,7 @@ class SniffTool(QtWidgets.QMainWindow, qt_ui.Ui_MainWindow):
         self.tls_hs_table.setRowCount(0)
         self.creds_table.setRowCount(0)
         self.smb_table.setRowCount(0)
+        self.sql_table.setRowCount(0)
         self.http_req_raw.clear()
         self.http_resp_raw.clear()
         self.http_req_headers.setRowCount(0)
@@ -5267,6 +5298,7 @@ class SniffTool(QtWidgets.QMainWindow, qt_ui.Ui_MainWindow):
         self.tls_hs_detail.clear()
         self.creds_detail.clear()
         self.smb_detail.clear()
+        self.sql_detail.clear()
 
     def _proxy_apply_filter(self, text):
         flt = text.strip().lower()
@@ -5305,6 +5337,12 @@ class SniffTool(QtWidgets.QMainWindow, qt_ui.Ui_MainWindow):
         elif idx == 6:  # SMB
             for r in range(self.smb_table.rowCount()):
                 self.smb_table.setRowHidden(r, bool(flt and not self._insp_smb_matches(r, flt)))
+        elif idx == 7:  # SQL
+            for r in range(self.sql_table.rowCount()):
+                it = self.sql_table.item(r, 0)
+                if it:
+                    entry = self._sql_entries[it.data(Qt.UserRole)]
+                    self.sql_table.setRowHidden(r, bool(flt and not self._insp_sql_matches(entry, flt)))
 
     # ------------------------------------------------------------------
     # Inspector — TLS Handshakes sub-tab
@@ -5646,6 +5684,374 @@ class SniffTool(QtWidgets.QMainWindow, qt_ui.Ui_MainWindow):
         idx = it.data(Qt.UserRole)
         if idx is None or idx >= len(self._smb_entries): return
         self.smb_detail.setPlainText(self._smb_entries[idx].get('detail', ''))
+
+    # ------------------------------------------------------------------
+    # Inspector — SQL sub-tab (MySQL port 3306, PostgreSQL port 5432)
+    # ------------------------------------------------------------------
+
+    _MYSQL_COMMANDS = {
+        0x00: "COM_SLEEP",    0x01: "COM_QUIT",       0x02: "COM_INIT_DB",
+        0x03: "COM_QUERY",    0x04: "COM_FIELD_LIST",  0x05: "COM_CREATE_DB",
+        0x06: "COM_DROP_DB",  0x07: "COM_REFRESH",     0x08: "COM_SHUTDOWN",
+        0x09: "COM_STATISTICS", 0x0a: "COM_PROCESS_INFO", 0x0d: "COM_DEBUG",
+        0x0e: "COM_PING",     0x11: "COM_CHANGE_USER", 0x16: "COM_STMT_PREPARE",
+        0x17: "COM_STMT_EXECUTE", 0x19: "COM_STMT_CLOSE", 0x1c: "COM_RESET_CONNECTION",
+    }
+
+    def _insp_parse_sql(self, pkt, t):
+        from scapy.layers.inet import TCP, IP
+        from scapy.packet import Raw
+        if not (pkt.haslayer(IP) and pkt.haslayer(TCP) and pkt.haslayer(Raw)):
+            return
+        raw = bytes(pkt[Raw].load)
+        src = pkt[IP].src
+        dst = pkt[IP].dst
+        sport = pkt[TCP].sport
+        dport = pkt[TCP].dport
+        if dport == 3306 or sport == 3306:
+            self._insp_parse_mysql(pkt, t, raw, src, dst, sport, dport)
+        elif dport == 5432 or sport == 5432:
+            self._insp_parse_pgsql(pkt, t, raw, src, dst, sport, dport)
+        elif dport == 1433 or sport == 1433:
+            self._insp_parse_mssql(pkt, t, raw, src, dst, sport, dport)
+
+    def _insp_parse_mysql(self, pkt, t, raw, src, dst, sport, dport):
+        if len(raw) < 5:
+            return
+        payload_len = int.from_bytes(raw[0:3], 'little')
+        seq = raw[3]
+        if len(raw) < 4 + payload_len or payload_len == 0:
+            return
+        payload = raw[4:4 + payload_len]
+
+        if dport != 3306:
+            return
+
+        cmd_byte = payload[0]
+
+        # Auth handshake response (seq==1): extract username
+        if seq == 1 and len(payload) > 36 and cmd_byte not in self._MYSQL_COMMANDS:
+            try:
+                username_start = 32  # capabilities(4)+max_packet(4)+charset(1)+reserved(23)
+                null_pos = payload.find(b'\x00', username_start)
+                if null_pos > username_start:
+                    username = payload[username_start:null_pos].decode('utf-8', errors='replace')
+                    if username and username.isprintable() and len(username) < 64:
+                        client = f"{src}:{sport}"
+                        server = f"{dst}:{dport}"
+                        self._insp_add_credential(
+                            "MySQL", client, server, username, "<auth hash>", t,
+                            f"MySQL login from {client} to {server}\nUsername: {username}")
+            except Exception:
+                pass
+            return
+
+        if cmd_byte not in self._MYSQL_COMMANDS:
+            return
+        cmd_name = self._MYSQL_COMMANDS[cmd_byte]
+
+        if cmd_byte == 0x0e:  # COM_PING — skip, no useful query
+            return
+
+        query = ''
+        if cmd_byte == 0x03:  # COM_QUERY
+            query = payload[1:].decode('utf-8', errors='replace').strip()
+        elif cmd_byte == 0x02:  # COM_INIT_DB
+            query = 'USE ' + payload[1:].decode('utf-8', errors='replace').strip()
+        elif cmd_byte == 0x11:  # COM_CHANGE_USER
+            null_pos = payload.find(b'\x00', 1)
+            if null_pos > 1:
+                query = 'CHANGE USER ' + payload[1:null_pos].decode('utf-8', errors='replace')
+        elif cmd_byte == 0x16:  # COM_STMT_PREPARE
+            query = payload[1:].decode('utf-8', errors='replace').strip()
+        else:
+            query = f"[{cmd_name}]"
+
+        if not query:
+            return
+
+        entry = {
+            'time': t,
+            'client': f"{src}:{sport}",
+            'server': f"{dst}:{dport}",
+            'proto': 'MySQL',
+            'command': cmd_name,
+            'query': query,
+            'detail': (
+                f"Protocol : MySQL\n"
+                f"Client   : {src}:{sport}\n"
+                f"Server   : {dst}:{dport}\n"
+                f"Command  : {cmd_name}\n"
+                f"Seq#     : {seq}\n\n"
+                f"{query}"
+            ),
+        }
+        self._sql_entries.append(entry)
+        self._insp_sql_add_row(entry)
+
+    def _insp_parse_pgsql(self, pkt, t, raw, src, dst, sport, dport):
+        if dport != 5432:
+            return
+
+        # Startup message: length(4) + protocol_version(4) + params — no type byte
+        if len(raw) >= 8:
+            proto_ver = int.from_bytes(raw[4:8], 'big')
+            if proto_ver == 196608:  # 0x00030000 = protocol v3
+                try:
+                    msg_len = int.from_bytes(raw[0:4], 'big')
+                    params_raw = raw[8:msg_len]
+                    parts = params_raw.split(b'\x00')
+                    params = {}
+                    for i in range(0, len(parts) - 1, 2):
+                        k = parts[i].decode('utf-8', errors='replace')
+                        v = parts[i + 1].decode('utf-8', errors='replace') if i + 1 < len(parts) else ''
+                        if k and v:
+                            params[k] = v
+                    if 'user' in params:
+                        username = params['user']
+                        database = params.get('database', params.get('dbname', '?'))
+                        client = f"{src}:{sport}"
+                        server = f"{dst}:{dport}"
+                        detail_lines = [f"PostgreSQL startup from {client} to {server}"]
+                        for k, v in params.items():
+                            detail_lines.append(f"  {k}: {v}")
+                        self._insp_add_credential(
+                            "PostgreSQL", client, server, username,
+                            f"database={database}", t, '\n'.join(detail_lines))
+                except Exception:
+                    pass
+                return
+
+        # Regular frontend messages: type(1) + length(4) + data
+        i = 0
+        while i < len(raw):
+            if i + 5 > len(raw):
+                break
+            msg_type = raw[i:i + 1]
+            msg_len = int.from_bytes(raw[i + 1:i + 5], 'big')
+            if msg_len < 4 or i + 1 + msg_len > len(raw):
+                break
+            msg_data = raw[i + 5:i + 1 + msg_len]
+
+            if msg_type == b'Q':  # Simple Query
+                query = msg_data.rstrip(b'\x00').decode('utf-8', errors='replace').strip()
+                if query:
+                    entry = {
+                        'time': t,
+                        'client': f"{src}:{sport}",
+                        'server': f"{dst}:{dport}",
+                        'proto': 'PostgreSQL',
+                        'command': 'Query',
+                        'query': query,
+                        'detail': (
+                            f"Protocol : PostgreSQL\n"
+                            f"Client   : {src}:{sport}\n"
+                            f"Server   : {dst}:{dport}\n"
+                            f"Command  : Simple Query\n\n"
+                            f"{query}"
+                        ),
+                    }
+                    self._sql_entries.append(entry)
+                    self._insp_sql_add_row(entry)
+
+            elif msg_type == b'P':  # Parse (prepared statement)
+                null1 = msg_data.find(b'\x00')
+                if null1 >= 0:
+                    stmt_name = msg_data[:null1].decode('utf-8', errors='replace')
+                    null2 = msg_data.find(b'\x00', null1 + 1)
+                    end = null2 if null2 > 0 else len(msg_data)
+                    query = msg_data[null1 + 1:end].decode('utf-8', errors='replace').strip()
+                    if query:
+                        stmt_label = stmt_name if stmt_name else '(unnamed)'
+                        entry = {
+                            'time': t,
+                            'client': f"{src}:{sport}",
+                            'server': f"{dst}:{dport}",
+                            'proto': 'PostgreSQL',
+                            'command': 'Parse (prepared)',
+                            'query': query,
+                            'detail': (
+                                f"Protocol : PostgreSQL\n"
+                                f"Client   : {src}:{sport}\n"
+                                f"Server   : {dst}:{dport}\n"
+                                f"Command  : Parse (Prepared Statement)\n"
+                                f"Stmt     : {stmt_label}\n\n"
+                                f"{query}"
+                            ),
+                        }
+                        self._sql_entries.append(entry)
+                        self._insp_sql_add_row(entry)
+
+            i += 1 + msg_len
+
+    # TDS packet type constants
+    _TDS_TYPES = {
+        0x01: "SQL Batch",    0x02: "Pre-Login (legacy)", 0x03: "RPC Request",
+        0x06: "Attention",    0x07: "Bulk Load",           0x0e: "Transaction Manager",
+        0x10: "TDS7 Login",   0x11: "SSPI",                0x12: "Pre-Login",
+        0xff: "Response",
+    }
+
+    def _insp_parse_mssql(self, pkt, t, raw, src, dst, sport, dport):
+        """Parse MSSQL TDS wire protocol. Handles SQL Batch and TDS7 Login."""
+        if dport != 1433:
+            return
+        if len(raw) < 8:
+            return
+
+        pkt_type = raw[0]
+        pkt_len = int.from_bytes(raw[2:4], 'big')
+        if pkt_len < 8 or len(raw) < pkt_len:
+            return
+
+        data = raw[8:pkt_len]
+        type_name = self._TDS_TYPES.get(pkt_type, f"0x{pkt_type:02x}")
+
+        if pkt_type == 0x01:  # SQL Batch — UTF-16LE query
+            try:
+                query = data.decode('utf-16-le', errors='replace').strip()
+            except Exception:
+                return
+            if not query:
+                return
+            entry = {
+                'time': t,
+                'client': f"{src}:{sport}",
+                'server': f"{dst}:{dport}",
+                'proto': 'MSSQL',
+                'command': 'SQL Batch',
+                'query': query,
+                'detail': (
+                    f"Protocol : MSSQL (TDS)\n"
+                    f"Client   : {src}:{sport}\n"
+                    f"Server   : {dst}:{dport}\n"
+                    f"Command  : SQL Batch\n\n"
+                    f"{query}"
+                ),
+            }
+            self._sql_entries.append(entry)
+            self._insp_sql_add_row(entry)
+
+        elif pkt_type == 0x03:  # RPC Request — stored procedure call
+            try:
+                # Proc name: 2-byte length (chars) + UTF-16LE string
+                if len(data) < 2:
+                    return
+                name_len = int.from_bytes(data[0:2], 'little')
+                if name_len > 0 and len(data) >= 2 + name_len * 2:
+                    proc_name = data[2:2 + name_len * 2].decode('utf-16-le', errors='replace')
+                else:
+                    proc_name = '(unknown)'
+                entry = {
+                    'time': t,
+                    'client': f"{src}:{sport}",
+                    'server': f"{dst}:{dport}",
+                    'proto': 'MSSQL',
+                    'command': 'RPC Request',
+                    'query': f"EXEC {proc_name}",
+                    'detail': (
+                        f"Protocol : MSSQL (TDS)\n"
+                        f"Client   : {src}:{sport}\n"
+                        f"Server   : {dst}:{dport}\n"
+                        f"Command  : RPC Request\n"
+                        f"Procedure: {proc_name}"
+                    ),
+                }
+                self._sql_entries.append(entry)
+                self._insp_sql_add_row(entry)
+            except Exception:
+                pass
+
+        elif pkt_type == 0x10:  # TDS7 Login — extract username + deobfuscate password
+            try:
+                # Login7 fixed header layout (offsets into `data`):
+                # 36-37  ibHostName,  38-39  cchHostName
+                # 40-41  ibUserName,  42-43  cchUserName
+                # 44-45  ibPassword,  46-47  cchPassword
+                if len(data) < 48:
+                    return
+                uname_off = int.from_bytes(data[40:42], 'little')
+                uname_len = int.from_bytes(data[42:44], 'little')
+                pword_off = int.from_bytes(data[44:46], 'little')
+                pword_len = int.from_bytes(data[46:48], 'little')
+
+                if uname_len == 0 or uname_off + uname_len * 2 > len(data):
+                    return
+                username = data[uname_off:uname_off + uname_len * 2].decode('utf-16-le', errors='replace')
+                if not username or not username.isprintable():
+                    return
+
+                # TDS password obfuscation: swap nibbles then XOR 0xA5 (per-byte).
+                # Reversible: XOR 0xA5 then swap nibbles.
+                password = ''
+                if pword_len > 0 and pword_off + pword_len * 2 <= len(data):
+                    raw_pw = bytearray(data[pword_off:pword_off + pword_len * 2])
+                    deobf = bytearray(len(raw_pw))
+                    for i, b in enumerate(raw_pw):
+                        b ^= 0xA5
+                        deobf[i] = ((b & 0x0F) << 4) | ((b >> 4) & 0x0F)
+                    password = deobf.decode('utf-16-le', errors='replace')
+
+                client = f"{src}:{sport}"
+                server = f"{dst}:{dport}"
+                secret = password if password else "<no password>"
+                detail = (
+                    f"MSSQL login from {client} to {server}\n"
+                    f"Username : {username}\n"
+                    f"Password : {secret}\n\n"
+                    f"Note: password is XOR-obfuscated in TDS, not hashed — "
+                    f"plaintext recovered from wire."
+                )
+                self._insp_add_credential("MSSQL", client, server, username, secret, t, detail)
+            except Exception:
+                pass
+
+    def _insp_sql_add_row(self, entry):
+        r = self.sql_table.rowCount()
+        self.sql_table.insertRow(r)
+        t_str = f"{entry['time']:.3f}" if isinstance(entry['time'], float) else str(entry['time'])
+        vals = [
+            str(len(self._sql_entries)),
+            t_str,
+            entry['client'],
+            entry['server'],
+            entry['proto'],
+            entry['command'],
+            entry['query'][:120],
+        ]
+        idx = len(self._sql_entries) - 1
+        for c, v in enumerate(vals):
+            item = QTableWidgetItem(v)
+            item.setData(Qt.UserRole, idx)
+            item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+            self.sql_table.setItem(r, c, item)
+        flt = self.proxy_filter_edit.text().strip().lower()
+        if flt and not self._insp_sql_matches(entry, flt):
+            self.sql_table.setRowHidden(r, True)
+
+    def _insp_sql_row_selected(self, row):
+        if row < 0:
+            return
+        it = self.sql_table.item(row, 0)
+        if not it:
+            return
+        idx = it.data(Qt.UserRole)
+        if idx is None or idx >= len(self._sql_entries):
+            return
+        self.sql_detail.setPlainText(self._sql_entries[idx].get('detail', ''))
+
+    def _insp_sql_matches(self, entry, flt):
+        text = ' '.join([
+            entry.get('client', ''), entry.get('server', ''),
+            entry.get('proto', ''), entry.get('command', ''),
+            entry.get('query', ''),
+        ]).lower()
+        return flt in text
+
+    def _insp_sql_copy(self):
+        text = self.sql_detail.toPlainText()
+        if text:
+            QtWidgets.QApplication.clipboard().setText(text)
 
     # ------------------------------------------------------------------
     # Statistics

@@ -959,11 +959,14 @@ class Ui_MainWindow(object):
         self.creds_detail.setPlaceholderText(
             "Credentials found in captured traffic will appear here.\n\n"
             "Detected automatically from:\n"
-            "  • HTTP Basic Auth  (Authorization: Basic …)\n"
-            "  • HTTP Digest Auth  (Authorization: Digest …)\n"
-            "  • FTP  (USER / PASS commands)\n"
-            "  • Telnet  (cleartext login sequences)\n"
-            "  • SMB NTLM  (NTLMv1/v2 challenge-response hashes)")
+            "  \u2022 HTTP Basic Auth  (Authorization: Basic \u2026)\n"
+            "  \u2022 HTTP Digest Auth  (Authorization: Digest \u2026)\n"
+            "  \u2022 FTP  (USER / PASS commands)\n"
+            "  \u2022 Telnet  (cleartext login sequences)\n"
+            "  \u2022 SMB NTLM  (NTLMv1/v2 challenge-response hashes)\n"
+            "  \u2022 MySQL  (login username from auth handshake)\n"
+            "  \u2022 PostgreSQL  (username + database from startup message)\n"
+            "  \u2022 MSSQL  (username from TDS7 Login packet)")
         creds_detail_layout.addWidget(self.creds_detail)
 
         creds_splitter.addWidget(creds_detail_widget)
@@ -1082,6 +1085,60 @@ class Ui_MainWindow(object):
         smb_splitter.setSizes([320, 240])
         smb_layout.addWidget(smb_splitter)
         self.insp_tabs.addTab(smb_page, "SMB")
+
+        # ── Tab 7: SQL ───────────────────────────────────────────────────
+        sql_page = QtWidgets.QWidget()
+        sql_layout = QtWidgets.QVBoxLayout(sql_page)
+        sql_layout.setContentsMargins(0, 0, 0, 0)
+        sql_layout.setSpacing(4)
+
+        sql_splitter = QtWidgets.QSplitter(QtCore.Qt.Vertical)
+
+        self.sql_table = QtWidgets.QTableWidget(0, 7)
+        self.sql_table.setObjectName("sql_table")
+        self.sql_table.setHorizontalHeaderLabels(
+            ["#", "Time", "Client", "Server", "Protocol", "Command", "Query"])
+        self.sql_table.horizontalHeader().setSectionResizeMode(
+            QtWidgets.QHeaderView.ResizeToContents)
+        self.sql_table.horizontalHeader().setSectionResizeMode(
+            6, QtWidgets.QHeaderView.Stretch)
+        self.sql_table.setSelectionBehavior(QtWidgets.QTableWidget.SelectRows)
+        self.sql_table.setEditTriggers(QtWidgets.QTableWidget.NoEditTriggers)
+        self.sql_table.setAlternatingRowColors(True)
+        self.sql_table.verticalHeader().setVisible(False)
+        sql_splitter.addWidget(self.sql_table)
+
+        sql_detail_widget = QtWidgets.QWidget()
+        sql_detail_layout = QtWidgets.QVBoxLayout(sql_detail_widget)
+        sql_detail_layout.setContentsMargins(0, 0, 0, 0)
+        sql_detail_layout.setSpacing(2)
+
+        sql_detail_hdr = QtWidgets.QHBoxLayout()
+        sql_detail_hdr.addWidget(QtWidgets.QLabel("Query Detail"))
+        sql_detail_hdr.addStretch()
+        self.sql_copy_btn = QtWidgets.QPushButton("Copy")
+        self.sql_copy_btn.setObjectName("sql_copy_btn")
+        self.sql_copy_btn.setFixedWidth(60)
+        sql_detail_hdr.addWidget(self.sql_copy_btn)
+        sql_detail_layout.addLayout(sql_detail_hdr)
+
+        self.sql_detail = QtWidgets.QPlainTextEdit()
+        self.sql_detail.setObjectName("sql_detail")
+        self.sql_detail.setReadOnly(True)
+        self.sql_detail.setFont(QtGui.QFont("Monospace", 9))
+        self.sql_detail.setPlaceholderText(
+            "SQL queries captured from unencrypted traffic will appear here.\n\n"
+            "Detected automatically from:\n"
+            "  \u2022 MySQL  (port 3306) \u2014 COM_QUERY, COM_INIT_DB, COM_STMT_PREPARE\n"
+            "  \u2022 PostgreSQL  (port 5432) \u2014 Simple Query, Parse (prepared statements)\n"
+            "  \u2022 MSSQL  (port 1433) \u2014 SQL Batch, RPC Request (TDS protocol)\n\n"
+            "Credentials (usernames, auth) are forwarded to the Credentials tab.")
+        sql_detail_layout.addWidget(self.sql_detail)
+
+        sql_splitter.addWidget(sql_detail_widget)
+        sql_splitter.setSizes([300, 260])
+        sql_layout.addWidget(sql_splitter)
+        self.insp_tabs.addTab(sql_page, "SQL")
 
         proxy_layout.addWidget(self.insp_tabs, stretch=1)
         self.tabWidget.addTab(self.tab_proxy, "Inspector")

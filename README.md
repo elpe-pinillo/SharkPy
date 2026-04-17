@@ -41,30 +41,36 @@ You are **not** in the traffic path. You take a captured payload, open a fresh c
 
 ## Installation
 
-### Requirements
+**Requires:** Python 3.8+, root (Linux) or Administrator (Windows).
 
-- Python 3.8+
-- Linux (full feature set) or Windows (intercept via WinDivert)
-- Root / Administrator privileges (required for raw capture, iptables, and privileged ports)
-
-### Dependencies
+### Linux
 
 ```bash
-pip install scapy pyqt5 netifaces psutil qtmodern netfilterqueue cryptography
-```
+# System libraries (Debian/Ubuntu)
+sudo apt install python3-pip libnetfilter-queue-dev iptables
 
-Optional for additional protocol support:
+# Python packages
+pip install -r requirements.txt
 
-```bash
-pip install brotli    # brotli HTTP response decompression
-pip install zstd      # zstd HTTP response decompression
-```
-
-### Running
-
-```bash
+# Run
 sudo python3 Sharkpy/main.py
 ```
+
+Or use the installer script: `sudo bash install.sh`
+
+### Windows
+
+1. Install [Npcap](https://npcap.com/#download) — check *WinPcap API-compatible mode*
+2. Install Python packages:
+   ```powershell
+   pip install -r requirements-windows.txt
+   ```
+3. Run as Administrator:
+   ```powershell
+   python Sharkpy\main.py
+   ```
+
+Or use the installer script: run `install.ps1` as Administrator
 
 ---
 
