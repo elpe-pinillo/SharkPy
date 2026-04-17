@@ -279,6 +279,10 @@ class SniffTool(QtWidgets.QMainWindow, qt_ui.Ui_MainWindow):
         self.atk_rd_stop.clicked.connect(lambda: self._atk_stop("rd"))
         self.atk_ll_start.clicked.connect(lambda: self._atk_start("ll"))
         self.atk_ll_stop.clicked.connect(lambda: self._atk_stop("ll"))
+        self.atk_rap_start.clicked.connect(lambda: self._atk_start("rap"))
+        self.atk_rap_stop.clicked.connect(lambda: self._atk_stop("rap"))
+        self.atk_rap_enc.currentTextChanged.connect(
+            lambda v: self.atk_rap_password.setEnabled(v == "WPA2"))
         # Auto-fill Our IP when interface changes (Rogue DHCP drives all fields)
         self.atk_rd_iface.currentTextChanged.connect(self._atk_autofill_ip)
         # Trigger once with the current value to pre-populate on load
@@ -6388,7 +6392,8 @@ class SniffTool(QtWidgets.QMainWindow, qt_ui.Ui_MainWindow):
         except ImportError:
             import netifaces2 as netifaces
         ifaces = netifaces.interfaces()
-        for combo in (self.atk_arp_iface, self.atk_dns_iface, self.atk_deauth_iface):
+        for combo in (self.atk_arp_iface, self.atk_dns_iface, self.atk_deauth_iface,
+                      self.atk_dhs_iface, self.atk_rd_iface, self.atk_rap_iface):
             combo.clear()
             for iface in ifaces:
                 combo.addItem(iface)
@@ -6500,6 +6505,22 @@ class SniffTool(QtWidgets.QMainWindow, qt_ui.Ui_MainWindow):
             names_raw = self.atk_ll_names.text().strip()
             target_names = [n.strip() for n in names_raw.split(",") if n.strip()]
             fn = lambda: _atk_engine.llmnr_nbtns_poison(our_ip, target_names, stop_ev, log_cb)
+
+        elif name == "rap":
+            iface      = self.atk_rap_iface.currentText()
+            ssid       = self.atk_rap_ssid.text().strip()
+            channel    = self.atk_rap_channel.value()
+            encryption = self.atk_rap_enc.currentText()
+            password   = self.atk_rap_password.text()
+            if not ssid:
+                QtWidgets.QMessageBox.warning(self, "Rogue AP", "Enter an SSID.")
+                return
+            if encryption == "WPA2" and len(password) < 8:
+                QtWidgets.QMessageBox.warning(self, "Rogue AP",
+                    "WPA2 passphrase must be at least 8 characters.")
+                return
+            fn = lambda: _atk_engine.rogue_ap(
+                iface, ssid, channel, encryption, password, stop_ev, log_cb)
 
         else:
             return

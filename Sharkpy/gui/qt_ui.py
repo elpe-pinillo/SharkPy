@@ -1291,9 +1291,23 @@ class Ui_MainWindow(object):
         atk_layout = QtWidgets.QVBoxLayout(self.tab_attack)
         atk_layout.setContentsMargins(4, 4, 4, 4)
 
+        # Outer category tabs
         self.attack_tabs = QtWidgets.QTabWidget()
         self.attack_tabs.setObjectName("attack_tabs")
         atk_layout.addWidget(self.attack_tabs)
+
+        # Inner tab widgets per category
+        def _atk_category(name, label):
+            page = QtWidgets.QWidget()
+            inner = QtWidgets.QTabWidget()
+            inner.setObjectName(f"atk_{name}_tabs")
+            QtWidgets.QVBoxLayout(page).addWidget(inner)
+            self.attack_tabs.addTab(page, label)
+            return inner
+
+        self.atk_net_tabs  = _atk_category("net",  "Network")
+        self.atk_wifi_tabs = _atk_category("wifi", "WiFi")
+        self.atk_bt_tabs   = _atk_category("bt",   "Bluetooth")
 
         # ── Attack sub-tab helper ─────────────────────────────────────────
         def _atk_log(name):
@@ -1355,7 +1369,7 @@ class Ui_MainWindow(object):
         self.atk_log_arp = arp_log_grp.findChild(QtWidgets.QPlainTextEdit)
         arp_layout.addWidget(arp_log_grp, stretch=1)
 
-        self.attack_tabs.addTab(w_arp, "ARP Spoof")
+        self.atk_net_tabs.addTab(w_arp, "ARP Spoof")
 
         # ── Sub-tab 2: DNS Spoof ──────────────────────────────────────────
         w_dns = QtWidgets.QWidget()
@@ -1401,7 +1415,7 @@ class Ui_MainWindow(object):
         self.atk_log_dns = dns_log_grp.findChild(QtWidgets.QPlainTextEdit)
         dns_layout.addWidget(dns_log_grp, stretch=1)
 
-        self.attack_tabs.addTab(w_dns, "DNS Spoof")
+        self.atk_net_tabs.addTab(w_dns, "DNS Spoof")
 
         # ── Sub-tab 3: 802.11 Deauth ──────────────────────────────────────
         w_deauth = QtWidgets.QWidget()
@@ -1444,7 +1458,7 @@ class Ui_MainWindow(object):
         self.atk_log_deauth = deauth_log_grp.findChild(QtWidgets.QPlainTextEdit)
         deauth_layout.addWidget(deauth_log_grp, stretch=1)
 
-        self.attack_tabs.addTab(w_deauth, "802.11 Deauth")
+        self.atk_wifi_tabs.addTab(w_deauth, "802.11 Deauth")
 
         # ── Sub-tab 5: DHCP Starvation ────────────────────────────────────
         w_dhcp_starve = QtWidgets.QWidget()
@@ -1474,7 +1488,7 @@ class Ui_MainWindow(object):
         self.atk_log_dhs = dhs_log_grp.findChild(QtWidgets.QPlainTextEdit)
         dhs_layout.addWidget(dhs_log_grp, stretch=1)
 
-        self.attack_tabs.addTab(w_dhcp_starve, "DHCP Starvation")
+        self.atk_net_tabs.addTab(w_dhcp_starve, "DHCP Starvation")
 
         # ── Sub-tab 6: Rogue DHCP ─────────────────────────────────────────
         w_rdhcp = QtWidgets.QWidget()
@@ -1529,7 +1543,7 @@ class Ui_MainWindow(object):
         self.atk_log_rd = rd_log_grp.findChild(QtWidgets.QPlainTextEdit)
         rd_layout.addWidget(rd_log_grp, stretch=1)
 
-        self.attack_tabs.addTab(w_rdhcp, "Rogue DHCP")
+        self.atk_net_tabs.addTab(w_rdhcp, "Rogue DHCP")
 
         # ── Sub-tab 7: LLMNR / NBT-NS Poison ─────────────────────────────
         w_llmnr = QtWidgets.QWidget()
@@ -1568,7 +1582,72 @@ class Ui_MainWindow(object):
         self.atk_log_ll = ll_log_grp.findChild(QtWidgets.QPlainTextEdit)
         ll_layout.addWidget(ll_log_grp, stretch=1)
 
-        self.attack_tabs.addTab(w_llmnr, "LLMNR / NBT-NS")
+        self.atk_net_tabs.addTab(w_llmnr, "LLMNR / NBT-NS")
+
+        # ── WiFi: Rogue AP ────────────────────────────────────────────────
+        w_rap = QtWidgets.QWidget()
+        rap_layout = QtWidgets.QVBoxLayout(w_rap)
+
+        rap_cfg = QtWidgets.QGroupBox("Configuration")
+        rap_form = QtWidgets.QFormLayout(rap_cfg)
+
+        self.atk_rap_iface = _iface_combo("rap")
+        rap_form.addRow("Interface (AP mode):", self.atk_rap_iface)
+
+        self.atk_rap_ssid = QtWidgets.QLineEdit()
+        self.atk_rap_ssid.setPlaceholderText("e.g. FreeWifi")
+        rap_form.addRow("SSID:", self.atk_rap_ssid)
+
+        self.atk_rap_channel = QtWidgets.QSpinBox()
+        self.atk_rap_channel.setRange(1, 13)
+        self.atk_rap_channel.setValue(6)
+        rap_form.addRow("Channel:", self.atk_rap_channel)
+
+        self.atk_rap_enc = QtWidgets.QComboBox()
+        self.atk_rap_enc.addItems(["Open", "WPA2"])
+        self.atk_rap_enc.setObjectName("atk_rap_enc")
+        rap_form.addRow("Encryption:", self.atk_rap_enc)
+
+        self.atk_rap_password = QtWidgets.QLineEdit()
+        self.atk_rap_password.setPlaceholderText("WPA2 passphrase (min 8 chars)")
+        self.atk_rap_password.setEnabled(False)
+        rap_form.addRow("Password:", self.atk_rap_password)
+
+        rap_note = QtWidgets.QLabel(
+            "Requires hostapd (apt install hostapd).\n"
+            "Interface must support AP mode — check with: iw list | grep 'AP'\n"
+            "Tip: combine with Rogue DHCP to assign IPs to connecting clients."
+        )
+        rap_note.setStyleSheet("color: gray; font-size: 10px;")
+        rap_form.addRow("", rap_note)
+
+        rap_layout.addWidget(rap_cfg)
+
+        rap_btn_row = QtWidgets.QHBoxLayout()
+        self.atk_rap_start, self.atk_rap_stop = _atk_start_stop("rap")
+        rap_btn_row.addWidget(self.atk_rap_start)
+        rap_btn_row.addWidget(self.atk_rap_stop)
+        rap_btn_row.addStretch()
+        rap_layout.addLayout(rap_btn_row)
+
+        rap_log_grp = QtWidgets.QGroupBox("Log")
+        QtWidgets.QVBoxLayout(rap_log_grp).addWidget(_atk_log("rap"))
+        self.atk_log_rap = rap_log_grp.findChild(QtWidgets.QPlainTextEdit)
+        rap_layout.addWidget(rap_log_grp, stretch=1)
+
+        self.atk_wifi_tabs.addTab(w_rap, "Rogue AP")
+
+        # ── Bluetooth: placeholder ────────────────────────────────────────
+        w_bt = QtWidgets.QWidget()
+        bt_layout = QtWidgets.QVBoxLayout(w_bt)
+        bt_label = QtWidgets.QLabel(
+            "Bluetooth attacks coming soon.\n\n"
+            "Planned: BLE advertisement spoofing, RFCOMM fuzzing, HCI replay."
+        )
+        bt_label.setAlignment(QtCore.Qt.AlignCenter)
+        bt_label.setStyleSheet("color: gray;")
+        bt_layout.addWidget(bt_label)
+        self.atk_bt_tabs.addTab(w_bt, "Coming Soon")
 
         self.tabWidget.addTab(self.tab_attack, "Attack")
 

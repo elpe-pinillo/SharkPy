@@ -579,3 +579,89 @@ def llmnr_nbtns_poison(our_ip, target_names, stop_event, log_cb):
     t_llmnr.join(timeout=2)
     t_nbtns.join(timeout=2)
     log_cb("[Poison] Stopped")
+
+
+def rogue_ap(iface, ssid, channel, encryption, password, stop_event, log_cb):
+    """
+    Start a rogue access point using hostapd.
+    Requires: hostapd  (apt install hostapd)
+    Interface must support AP mode — verify with: iw list | grep -A 10 'Supported interface modes' | grep AP
+    """
+    import os
+    import subprocess
+    import tempfile
+
+    cfg_lines = [
+        f"interface={iface}",
+        "driver=nl80211",
+        f"ssid={ssid}",
+        "hw_mode=g",
+        f"channel={channel}",
+        "ignore_broadcast_ssid=0",
+        "auth_algs=1",
+    ]
+
+    if encryption == "WPA2":
+        if len(password) < 8:
+            log_cb("[RogueAP] ERROR: WPA2 passphrase must be at least 8 characters.")
+            return
+        cfg_lines += [
+            "wpa=2",
+            "wpa_key_mgmt=WPA-PSK",
+            "rsn_pairwise=CCMP",
+            f"wpa_passphrase={password}",
+        ]
+
+    cfg_content = "\n".join(cfg_lines) + "\n"
+
+    tmp = tempfile.NamedTemporaryFile(
+        mode='w', suffix='.conf', prefix='sharkpy_hostapd_', delete=False)
+    try:
+        tmp.write(cfg_content)
+        tmp.close()
+        cfg_path = tmp.name
+
+        log_cb(f"[RogueAP] Interface : {iface}")
+        log_cb(f"[RogueAP] SSID      : {ssid}")
+        log_cb(f"[RogueAP] Channel   : {channel}")
+        log_cb(f"[RogueAP] Encryption: {encryption}")
+        log_cb(f"[RogueAP] Starting hostapd…")
+
+        proc = subprocess.Popen(
+            ["hostapd", cfg_path],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+
+        while not stop_event.is_set():
+            if proc.poll() is not None:
+                remaining = proc.stdout.read()
+                if remaining:
+                    for line in remaining.splitlines():
+                        log_cb(f"[hostapd] {line}")
+                log_cb(f"[RogueAP] hostapd exited (code {proc.returncode})")
+                break
+            line = proc.stdout.readline()
+            if line:
+                log_cb(f"[hostapd] {line.rstrip()}")
+
+        log_cb("[RogueAP] Stopping…")
+        proc.terminate()
+        try:
+            proc.wait(timeout=4)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+        log_cb("[RogueAP] Stopped.")
+
+    except FileNotFoundError:
+        log_cb("[RogueAP] ERROR: hostapd not found — install with: apt install hostapd")
+    except PermissionError:
+        log_cb("[RogueAP] ERROR: permission denied — run SharkPy as root.")
+    except Exception as e:
+        log_cb(f"[RogueAP] ERROR: {e}")
+    finally:
+        try:
+            os.unlink(tmp.name)
+        except Exception:
+            pass
